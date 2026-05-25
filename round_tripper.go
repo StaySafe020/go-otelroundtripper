@@ -201,6 +201,10 @@ func (roundTripper *otelRoundTripper) errorHook(ctx context.Context, err error, 
 		roundTripper.metrics.timeoutsCounter.Add(ctx, 1, api.WithAttributes(attributes...))
 	}
 
+	if errors.Is(err, context.DeadlineExceeded) {
+		roundTripper.metrics.deadlineExceededCounter.Add(ctx, 1, api.WithAttributes(attributes...))
+	}
+
 	if strings.HasSuffix(err.Error(), context.Canceled.Error()) {
 		roundTripper.metrics.canceledCounter.Add(ctx, 1, api.WithAttributes(attributes...))
 	}

@@ -3,7 +3,6 @@ package otelroundtripper
 import (
 	"context"
 	"errors"
-	"go.opentelemetry.io/otel/metric/noop"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +15,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric/noop"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 func TestNew(t *testing.T) {
@@ -113,6 +115,55 @@ func TestOtelRoundTripper_RoundTripWithCancelledContext(t *testing.T) {
 
 	// Teardown
 	server.Close()
+}
+
+func TestOtelRoundTripper_RoundTripWithDeadlineExceeded(t *testing.T) {
+	// Setup
+	t.Parallel()
+	server := makeTestServer(http.StatusOK, http.StatusText(http.StatusOK), 200)
+	defer server.Close()
+
+	// Arrange: use a real SDK meter with a manual reader so we can inspect emitted metrics
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer func() { _ = provider.Shutdown(context.Background()) }()
+
+	client := &http.Client{
+		Transport: New(
+			WithName("test"),
+			WithMeter(provider.Meter("test")),
+		),
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
+	assert.Nil(t, err)
+
+	// Act: request will hit the slow server and the context deadline will expire
+	_, err = client.Do(req) //nolint:bodyclose
+	assert.NotNil(t, err)
+
+	// Collect all metrics from the SDK
+	var rm metricdata.ResourceMetrics
+	assert.Nil(t, reader.Collect(context.Background(), &rm))
+
+	// Find the deadline_exceeded counter and assert it was incremented
+	var deadlineExceededSum int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "test.deadline_exceeded" {
+				data, ok := m.Data.(metricdata.Sum[int64])
+				if ok {
+					for _, dp := range data.DataPoints {
+						deadlineExceededSum += dp.Value
+					}
+				}
+			}
+		}
+	}
+	assert.Equal(t, int64(1), deadlineExceededSum, "expected deadline_exceeded counter to be 1")
 }
 
 // makeTestServer creates an api server for testing
