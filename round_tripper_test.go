@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -86,35 +85,60 @@ func TestOtelRoundTripper_RoundTripWithTimeout(t *testing.T) {
 	var timeoutError net.Error
 	assert.True(t, errors.As(err, &timeoutError) && timeoutError.Timeout())
 
-	// Teardown
+	
 	server.Close()
 }
 
 func TestOtelRoundTripper_RoundTripWithCancelledContext(t *testing.T) {
-	// Setup
+	/
 	t.Parallel()
-	server := makeTestServer(http.StatusOK, http.StatusText(http.StatusOK), 0)
+	server := makeTestServer(http.StatusOK, http.StatusText(http.StatusOK), 200)
+	defer server.Close()
 
-	// Arrange
+	
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	defer func() { _ = provider.Shutdown(context.Background()) }()
+
 	client := &http.Client{
-		Transport: New(),
+		Transport: New(
+			WithName("test"),
+			WithMeter(provider.Meter("test")),
+		),
 	}
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	cancelFunc()
 
-	// Act
+	
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 	assert.Nil(t, err)
+	cancelFunc()
 
 	_, err = client.Do(request) //nolint:bodyclose
 
 	// Assert
 	assert.NotNil(t, err)
-	assert.True(t, strings.HasSuffix(err.Error(), context.Canceled.Error()))
+	assert.True(t, errors.Is(err, context.Canceled))
 
-	// Teardown
-	server.Close()
+	// Collect all metrics from the SDK
+	var rm metricdata.ResourceMetrics
+	assert.Nil(t, reader.Collect(context.Background(), &rm))
+
+
+	var canceledSum int64
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "test.cancelled" {
+				data, ok := m.Data.(metricdata.Sum[int64])
+				if ok {
+					for _, dp := range data.DataPoints {
+						canceledSum += dp.Value
+					}
+				}
+			}
+		}
+	}
+	assert.Equal(t, int64(1), canceledSum, "expected cancelled counter to be 1")
 }
 
 func TestOtelRoundTripper_RoundTripWithDeadlineExceeded(t *testing.T) {
