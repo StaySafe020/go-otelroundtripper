@@ -8,7 +8,6 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.18.0"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -205,7 +204,7 @@ func (roundTripper *otelRoundTripper) errorHook(ctx context.Context, err error, 
 		roundTripper.metrics.deadlineExceededCounter.Add(ctx, 1, api.WithAttributes(attributes...))
 	}
 
-	if strings.HasSuffix(err.Error(), context.Canceled.Error()) {
+	if errors.Is(err, context.Canceled) {
 		roundTripper.metrics.canceledCounter.Add(ctx, 1, api.WithAttributes(attributes...))
 	}
 }
