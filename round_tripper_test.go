@@ -85,17 +85,15 @@ func TestOtelRoundTripper_RoundTripWithTimeout(t *testing.T) {
 	var timeoutError net.Error
 	assert.True(t, errors.As(err, &timeoutError) && timeoutError.Timeout())
 
-	
 	server.Close()
 }
 
 func TestOtelRoundTripper_RoundTripWithCancelledContext(t *testing.T) {
-	/
+	// Setup
 	t.Parallel()
 	server := makeTestServer(http.StatusOK, http.StatusText(http.StatusOK), 200)
 	defer server.Close()
 
-	
 	reader := sdkmetric.NewManualReader()
 	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	defer func() { _ = provider.Shutdown(context.Background()) }()
@@ -109,7 +107,6 @@ func TestOtelRoundTripper_RoundTripWithCancelledContext(t *testing.T) {
 
 	ctx, cancelFunc := context.WithCancel(context.Background())
 
-	
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL, nil)
 	assert.Nil(t, err)
 	cancelFunc()
@@ -123,7 +120,6 @@ func TestOtelRoundTripper_RoundTripWithCancelledContext(t *testing.T) {
 	// Collect all metrics from the SDK
 	var rm metricdata.ResourceMetrics
 	assert.Nil(t, reader.Collect(context.Background(), &rm))
-
 
 	var canceledSum int64
 	for _, sm := range rm.ScopeMetrics {
